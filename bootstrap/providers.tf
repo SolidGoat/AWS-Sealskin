@@ -12,9 +12,11 @@ provider "aws" {
   region = var.region
 
   default_tags {
-    tags = {
+    tags = merge({
       Workload  = var.workload_name
       ManagedBy = "Terraform"
-    }
+      },
+      var.custom_tags
+    )
   }
 }
