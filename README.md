@@ -29,3 +29,21 @@
    ```bash
    $ terraform init -backend-config="bootstrap.backend.config" -migrate-state
    ```
+
+### Create Sealskin Keys
+
+1. Navigate to the .secrets folder (this folder is not tracked by Git)
+   ```bash
+   $ cd .secrets
+   ```
+2. Generate the RSA private key using 2048 bits (using `openssl`)
+   ```bash
+   $ openssl genpkey -algorithm RSA -out private_key.pem -pkeyopt rsa_keygen_bits:2048
+   ```
+3. Generate the public key from the private key (using `openssl`)
+
+   ```bash
+   openssl rsa -in private_key.pem -pubout -out public_key.pem
+   ```
+
+   Terraform will securely (will not be stored in TF state) copy these keys from `.secrets` to AWS Secrets Manager

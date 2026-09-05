@@ -44,6 +44,7 @@ resource "aws_instance" "sealskin_instance" {
     workload_name = var.workload_name,
     host_url      = data.http.my_public_ip
   })
+  iam_instance_profile = aws_iam_instance_profile.sealskin_instance_profile.name
 }
 
 ############################################
@@ -96,4 +97,61 @@ resource "aws_vpc_security_group_ingress_rule" "admin_ssh" {
   from_port         = 22
   to_port           = 22
   description       = "SSH"
+}
+
+############################################
+# Secrets Manager
+############################################
+resource "aws_secretsmanager_secret" "sealskin_app_keys" {
+  name        = "${var.workload_name}/sealskin_app_keys"
+  description = "Public and private keys for ${var.workload_name}"
+}
+
+resource "aws_secretsmanager_secret_version" "sealskin_app_keys_values" {
+  secret_id = aws_secretsmanager_secret.sealskin_app_keys.id
+
+  secret_string = jsondecode({
+    private_key = file("${path.module}/.secrets/private_key")
+    public_key  = file("${path.module}/.secrets/public_key")
+  })
+
+}
+
+############################################
+# IAM Role and Instance Profile
+############################################
+resource "aws_iam_role" "sealskin_instance_secrets_role" {
+  name = "${var.workload_name}-ec2-secrets-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action    = "sts:AssumeRole"
+        Effect    = "Allow"
+        Principal = { Service = "ec2.amazonaws.com" }
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy" "sealskin_instance_secrets_read_policy" {
+  name = "${var.workload_name}-secrets-read-policy"
+  role = aws_iam_role.sealskin_instance_secrets_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = "secretsmanager:GetSecretValue"
+        Resource = aws_secretsmanager_secret.sealskin_app_keys.arn
+      }
+    ]
+  })
+}
+
+resource "aws_iam_instance_profile" "sealskin_instance_profile" {
+  name = "${var.workload_name}-instance-profile"
+  role = aws_iam_role.sealskin_instance_secrets_role.id
 }
