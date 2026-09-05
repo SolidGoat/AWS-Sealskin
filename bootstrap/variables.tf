@@ -6,7 +6,7 @@ variable "workload_name" {
 variable "region" {
   type        = string
   default     = "us-east-1"
-  description = "AWS region"
+  description = "The target AWS region (e.g., us-east-1, eu-west-1)"
 }
 
 variable "custom_tags" {

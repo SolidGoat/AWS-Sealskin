@@ -67,9 +67,10 @@ resource "aws_s3_bucket_policy" "enforce_tls" {
 resource "local_file" "backend_tf_bootstrap" {
   filename = "${path.module}/boostrap.backend.config"
   content  = <<-EOT
-    bucket = "${aws_s3_bucket.tf_state_bucket.id}"
-    key    = "bootstrap/terraform.tfstate"
-    region = "${var.region}"
+    bucket       = "${aws_s3_bucket.tf_state_bucket.id}"
+    key          = "bootstrap/terraform.tfstate"
+    region       = "${var.region}"
+    encrypt      = true
     use_lockfile = true
   EOT  
 }
@@ -80,9 +81,10 @@ resource "local_file" "backend_tf_bootstrap" {
 resource "local_file" "backend_tf_root" {
   filename = "${path.module}/../${var.workload_name}.backend.config"
   content  = <<-EOT
-    bucket = "${aws_s3_bucket.tf_state_bucket.id}"
-    key    = "${var.workload_name}/terraform.tfstate"
-    region = "${var.region}"
+    bucket       = "${aws_s3_bucket.tf_state_bucket.id}"
+    key          = "${var.workload_name}/terraform.tfstate"
+    region       = "${var.region}"
+    encrypt      = true
     use_lockfile = true
   EOT   
 }
