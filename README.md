@@ -32,8 +32,9 @@
 
 ### Create Sealskin Keys
 
-1. Navigate to the .secrets folder (this folder is not tracked by Git)
+1. Create and navigate to the .secrets folder (this folder is not tracked by Git)
    ```bash
+   $ mkdir .secrets
    $ cd .secrets
    ```
 2. Generate the RSA private key using 2048 bits (using `openssl`)
