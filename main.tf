@@ -29,39 +29,41 @@ data "aws_ami" "ubuntu" {
   }
 }
 
-resource "aws_instance" "sealskin_instance" {
+resource "aws_instance" "sandbox_instance" {
   ami                         = data.aws_ami.ubuntu.id
   instance_type               = var.instance_size
   associate_public_ip_address = true
-  ebs_block_device {
-    device_name           = "/dev/sda"
+  vpc_security_group_ids      = [aws_security_group.sandbox_security_group.id]
+  root_block_device {
     volume_size           = var.volume_size
     volume_type           = "gp3"
     encrypted             = true
     delete_on_termination = true
   }
+  # Enforce IMDSv2
+  metadata_options {
+    http_endpoint               = "enabled"
+    http_tokens                 = "required"
+    http_put_response_hop_limit = 1
+  }
   user_data = templatefile("${path.module}/scripts/setup.sh", {
     workload_name = var.workload_name,
-    host_url      = data.http.my_public_ip
+    app_keys_arn  = aws_secretsmanager_secret.sealskin_app_keys.arn
   })
-  iam_instance_profile = aws_iam_instance_profile.sealskin_instance_profile.name
+  iam_instance_profile = aws_iam_instance_profile.sandbox_profile.name
 }
 
 ############################################
 # EC2 Instance Security Groups
 ############################################
-data "http" "my_public_ip" {
-  url = "https://ifconfig.me/ip"
-}
-
-resource "aws_security_group" "web" {
+resource "aws_security_group" "sandbox_security_group" {
   name        = "${var.workload_name}-${local.region_short}-web-sg"
   description = "Allow web access to ${var.workload_name}"
   vpc_id      = data.aws_vpc.non-default.id
 }
 
-resource "aws_vpc_security_group_ingress_rule" "web" {
-  security_group_id = aws_security_group.web.id
+resource "aws_vpc_security_group_ingress_rule" "sandbox_ingress" {
+  security_group_id = aws_security_group.sandbox_security_group.id
   cidr_ipv4         = "0.0.0.0/0"
   ip_protocol       = "tcp"
   from_port         = 8000
@@ -69,8 +71,8 @@ resource "aws_vpc_security_group_ingress_rule" "web" {
   description       = "HTTP Fallback API communication port."
 }
 
-resource "aws_vpc_security_group_ingress_rule" "web" {
-  security_group_id = aws_security_group.web.id
+resource "aws_vpc_security_group_ingress_rule" "sandbox_ingress" {
+  security_group_id = aws_security_group.sandbox_security_group.id
   cidr_ipv4         = "0.0.0.0/0"
   ip_protocol       = "tcp"
   from_port         = 8443
@@ -78,25 +80,10 @@ resource "aws_vpc_security_group_ingress_rule" "web" {
   description       = "HTTPS Sessions and API communication port."
 }
 
-resource "aws_vpc_security_group_egress_rule" "web_egress_all" {
-  security_group_id = aws_security_group.web.id
+resource "aws_vpc_security_group_egress_rule" "sandbox_egress_all" {
+  security_group_id = aws_security_group.sandbox_security_group.id
   cidr_ipv4         = "0.0.0.0/0"
   ip_protocol       = "-1"
-}
-
-resource "aws_security_group" "admin_ssh" {
-  name        = "${var.workload_name}-${local.region_short}-admin-ssh-sg"
-  description = "Allow SSH access to ${var.workload_name}"
-  vpc_id      = data.aws_vpc.non-default.id
-}
-
-resource "aws_vpc_security_group_ingress_rule" "admin_ssh" {
-  security_group_id = aws_security_group.admin_ssh.id
-  cidr_ipv4         = "${data.http.my_public_ip}/32"
-  ip_protocol       = "tcp"
-  from_port         = 22
-  to_port           = 22
-  description       = "SSH"
 }
 
 ############################################
@@ -114,14 +101,13 @@ resource "aws_secretsmanager_secret_version" "sealskin_app_keys_values" {
     private_key = file("${path.module}/.secrets/private_key")
     public_key  = file("${path.module}/.secrets/public_key")
   })
-
 }
 
 ############################################
 # IAM Role and Instance Profile
 ############################################
-resource "aws_iam_role" "sealskin_instance_secrets_role" {
-  name = "${var.workload_name}-ec2-secrets-role"
+resource "aws_iam_role" "sandbox_role" {
+  name = "${var.workload_name}-instance-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -135,9 +121,14 @@ resource "aws_iam_role" "sealskin_instance_secrets_role" {
   })
 }
 
-resource "aws_iam_role_policy" "sealskin_instance_secrets_read_policy" {
+resource "aws_iam_instance_profile" "sandbox_profile" {
+  name = "${var.workload_name}-instance-profile"
+  role = aws_iam_role.sandbox_role.id
+}
+
+resource "aws_iam_role_policy" "sandbox_secrets_read_policy" {
   name = "${var.workload_name}-secrets-read-policy"
-  role = aws_iam_role.sealskin_instance_secrets_role.id
+  role = aws_iam_role.sandbox_role.id
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -151,7 +142,20 @@ resource "aws_iam_role_policy" "sealskin_instance_secrets_read_policy" {
   })
 }
 
-resource "aws_iam_instance_profile" "sealskin_instance_profile" {
-  name = "${var.workload_name}-instance-profile"
-  role = aws_iam_role.sealskin_instance_secrets_role.id
+resource "aws_iam_role_policy_attachment" "ssm_core" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+  role       = aws_iam_role.sandbox_role.id
+}
+
+resource "aws_iam_role_policy_attachment" "cloudwatch_logs" {
+  policy_arn = "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy"
+  role       = aws_iam_role.sandbox_role.id
+}
+
+############################################
+# CloudWatch Logging
+############################################
+resource "aws_cloudwatch_log_group" "sandbox_logs" {
+  name              = "/aws/ec2/${var.workload_name}-syslogs"
+  retention_in_days = 14
 }

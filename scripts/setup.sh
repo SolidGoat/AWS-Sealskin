@@ -1,14 +1,27 @@
 #!/usr/bin/env bash
+# shellcheck source=tf_vars.sh
 
 set -e
 
 exec > >(tee /var/log/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1
 
 export DEBIAN_FRONTEND=noninteractive
-workload_name=${workload_name}
-host_url=${host_url}
+# Get public IP of instance
+TOKEN=$(curl -s -X PUT "http://169.254.169" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600")
+PUBLIC_IP=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169)
+export HOST_URL=$PUBLIC_IP
 
-echo -e "START: Instance intallation for $workload_name...\n"
+# shellcheck disable=SC2154
+export WORKLOAD_NAME=${workload_name}
+
+# shellcheck disable=SC2154
+export APP_KEYS_ARN=${app_keys_arn}
+
+# Get OS architecture
+ARCH=$(dpkg --print-architecture)
+
+echo -e "Detected system CPU architecture: $ARCH\n"
+echo -e "START: Instance intallation for $WORKLOAD_NAME...\n"
 
 echo -e "START: Updating OS...\n"
 apt-get -y update
@@ -22,6 +35,50 @@ echo -e "\nEND: Package intallations\n"
 echo -e "START: Installing AWS CLI...\n"
 curl -fsSL https://awscli.amazonaws.com/v2/install.sh | bash
 echo -e "\nEND: Installing AWS CLI\n"
+
+echo -e "START: Installing AWS CloudWatch Agent $ARCH...\n"
+cd /tmp
+wget "https://amazoncloudwatch-agent.s3.amazonaws.com/ubuntu/${ARCH,,}/latest/amazon-cloudwatch-agent.deb" -O ./amazon-cloudwatch-agent.deb
+
+# Install CloudWatch Agent
+dpkg -i -E ./amazon-cloudwatch-agent.deb
+
+# Cleaning up the local deb file
+rm ./amazon-cloudwatch-agent.deb
+
+# Create config file
+cat <<EOF > /opt/aws/amazon-cloudwatch-agent/bin/config.json
+{
+  "agent": {
+    "metrics_collection_interval": 60,
+    "run_as_user": "cwagent"
+  },
+  "logs": {
+    "logs_collected": {
+      "files": {
+        "collect_list": [
+          {
+            "file_path": "/var/log/syslog",
+            "log_group_name": "/aws/ec2/$WORKLOAD_NAME-sandbox-syslog",
+            "log_stream_name": "{instance_id}-syslog"
+          },
+          {
+            "file_path": "/var/log/auth.log",
+            "log_group_name": "/aws/ec2/$WORKLOAD_NAME-sandbox-syslog",
+            "log_stream_name": "{instance_id}-security-auth"
+          },
+          {
+            "file_path": "/var/log/user-data.log",
+            "log_group_name": "/aws/ec2/$WORKLOAD_NAME-sandbox-syslog",
+            "log_stream_name": "{instance_id}-user-data"
+          }
+        ]
+      }
+    }
+  }
+}
+EOF
+echo -e "\nEND: Installing AWS CloudWatch Agent\n"
 
 echo -e "START: Installing Docker Engine...\n"
 cd /tmp
@@ -57,7 +114,7 @@ services:
       - PUID=$uid
       - PGID=$gid
       - TZ=Etc/UTC
-      - HOST_URL=$host_url
+      - HOST_URL=$HOST_URL
     volumes:
       - /opt/docker-data/sealskin/config:/config
       - /opt/docker-data/sealskin/storage:/storage
@@ -68,7 +125,7 @@ echo -e "\nEND: Sealskin environment setup\n"
 
 echo -e "START: Get Sealskin keys from Secrets Manager...\n"
 SECRET_JSON=$(aws secretsmanager get-secret-value \
-    --secret-id "production/app-server/ssh-keys" \
+    --secret-id "$APP_KEYS_ARN" \
     --query "SecretString" \
     --output "text")
 
@@ -89,4 +146,4 @@ echo -e "START: Sealskin instance...\n"
 sudo -u svc-sealskin docker compose -f /opt/docker-data/sealskin/compose.yaml up -d
 echo -e "\nEND: Sealskin instance\n"
 
-echo -e "\nEND: Instance intallation for ${workload_name}\n"
+echo -e "\nEND: Instance intallation for $WORKLOAD_NAME\n"

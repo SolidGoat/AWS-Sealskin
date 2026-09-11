@@ -8,3 +8,10 @@ repos:
         language: system
         stages: ["pre-commit", "pre-push"]
         pass_filenames: false
+      - id: shellcheck
+        name: ShellCheck
+        description: Lint shell scripts for errors before execution.
+        entry: shellcheck
+        language: system
+        types: [shell]
+        files: ^scripts/.*\.sh$
